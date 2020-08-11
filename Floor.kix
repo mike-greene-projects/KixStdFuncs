@@ -27,7 +27,7 @@
 ;;
 ;;EXAMPLES       
 ;
-Function Floor($_Float)
+Function Floor($_Float) ;; new comment 
 
   Dim $_RoundedFloat
   
