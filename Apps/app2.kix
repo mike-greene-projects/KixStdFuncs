@@ -1,0 +1,140 @@
+; 
+; STATUS: Operational
+;
+; LICENSE: None
+;
+; Version 1.0  - 2020/08/28 - Michael Greene
+;            a -              Enable
+;            b -              Prep for production (ITPConfig)
+;            c - 2020/11/10   Function to convert to INI
+; 
+; Arguments:
+;	--D             Enable DEBUG mode
+;
+;       --E             Entity identifier
+;
+;       --F             Query entity "Fields"
+;
+;       --U             Query entity "UserDefinedFields"
+;
+; EVENT IDs:
+;       None
+;
+
+Break On
+$ = SetOption('Explicit', 'On')  
+$ = SetOption('WrapAtEOL', 'On')
+$ = SetOption('NoVarsInStrings', 'On')
+$ = SetOption('NoMacrosInStrings', 'On')
+
+; Declare variables
+; ======================================================================
+Global $DEBUG, $LOGONLY, $MSG_LOG_
+Dim $P_UN, $P_Key, $P_IC
+Dim $P_Auth[2], $P_Url, $Version
+Dim $aResp
+
+$DEBUG   = Bool(InStr(GetCommandLine(0), '--D'))
+$LOGONLY = 16
+$P_Url   = 'https://webservices2.autotask.net/atservicesrest/'
+$P_UN    = ''  ;!; itp config 
+$P_Key   = ''  ;!; itp config 
+$P_IC    = ''  ;!; itp config
+
+$P_Auth = atGenAuth($P_UN, $P_Key, $P_IC)
+$Version = atGetCodebase($P_Auth, $P_Url)
+$P_Url = $P_Url + $Version
+
+; ======================================================================
+Dim $Entity
+Dim $Path
+Dim $WriteFlag
+Dim $CommandLine, $Arg, $Rc
+; ======================================================================
+$CommandLine = Join(GetCommandLine(1), Chr(10))
+Select
+ Case InStr($CommandLine, '--F')
+  If InStr($CommandLine, '--U')
+    fMsg('Cannot query fields and userDefinedFields in same execution.', '')
+    Exit 87
+  EndIf
+  $Path = 'Fields'
+  
+ Case InStr($CommandLine, '--U')
+  If InStr($CommandLine, '--F')
+    fMsg('Cannot query fields and userDefinedFields in same execution.', '')
+    Exit 87
+  EndIf
+  $Path = 'UserDefinedFields'
+  
+EndSelect 
+
+If InStr($CommandLine, '--E:')
+  $CommandLine = GetCommandLine(1)
+  $WriteFlag = 1
+  For Each $Arg in $CommandLine
+    If InStr($Arg, '--E:')
+      $Entity = Trim(Replace($Arg, '--E:', ''))
+      If Not $Entity
+        fMsg('--E: specified, but no query value was provided', '')
+        Exit 87
+      EndIf
+    EndIf
+  Next
+Else
+  fMsg('No entity specified. Setting defaults and returning func "info"', '')
+  $Path = ''
+  $Entity = ''
+  $WriteFlag = 0
+EndIf
+
+$Rc = atGetEntityInfo($P_Auth, $P_Url, $Entity, $Path, $WriteFlag)
+DispResult($Rc)
+Quit 0
+
+
+
+
+Function atFieldsJsonToIni($_JsonArray, $_FilePathOut, $_aFields)
+Dim $_Json, $_Json2, $_Json3, $_Ini
+Dim $_I, $_J, $_Index
+
+; Validate the field. Write ini.
+$_Json = ParseJSON($_JsonArray, 'root.fields.*.name')
+For $_I = 0 to UBound($_Json)
+  'Field name: ' $_Json[$_I] @CRLF
+  If InStr(Join($_aFields, ' '), $_Json[$_I])
+    $_Ini = WriteProfileString($_FilePathOut, $_Json[$_I], 'Identifier', $_I)
+  EndIf
+Next
+
+; Retrieve the picklist ids for each field in $_Fields
+For $_I = 0 to UBound($_aFields)
+  $_Index = ReadProfileString($_FilePathOut, $_aFields[$_I], 'Identifier')
+  If Not $_Index 'Record not found' Exit 87 EndIf
+  
+  ; Primary arrays - exit if indexing error
+  $_Json = ParseJson($_JsonArray, 'root.fields.' + $_Index + '.pickListValues.*.label')
+  $_Json2 = ParseJson($_JsonArray, 'root.fields.' + $_Index + '.pickListValues.*.value')
+  If UBound($_Json) <> UBound($_Json2) 'Array indexing error' Exit 87 EndIf
+  
+  ; Get the label and its value (id)
+  If $_aFields[$_I] = 'SubissueType'
+    ; Seconday array for parentValue - exit if indexing error
+    $_Json3 = ParseJson($_JsonArray, 'root.fields.' + $_Index + '.pickListValues.*.parentValue')
+    If UBound($_Json) <> UBound($_Json3) 'Array indexing error' Exit 87 EndIf
+  EndIf
+
+  ; Write back to the ini section
+  For $_J = 0 to UBound($_Json)
+    If $_aFields[$_I] = 'SubissueType'
+      ; Write data as: [SubissueType]SubissueName__SubIssueId=ParentId
+      $_Ini = WriteProfileString($_FilePathOut, $_aFields[$_I], $_Json[$_J] + '__' + $_Json2[$_J], $_Json3[$_J]) 
+    Else
+      ; Write data as [PARENTOBJECT]FieldName__FieldId=1
+      $_Ini = WriteProfileString($_FilePathOut, $_aFields[$_I], $_Json[$_J] + '__' + $_Json2[$_J], 1)
+    EndIf
+  Next  
+Next
+
+EndFunction
